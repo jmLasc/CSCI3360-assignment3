@@ -65,14 +65,14 @@ tools = [
     }
     },{
     "name": "analyze_data",
-    "description": """Call this to generate Python code that uses pandas for data analysis. The code should assist in understanding metrics or performing tasks such as summarizing data, finding correlations, handling missing values, etc. Example user inquiries could be 'show summary statistics for all columns', 'find correlation between age and salary', or 'identify missing data in the dataset'. Should return Python code as a string.
+    "description": """Call this to generate Python code that uses pandas for data analysis. The code should assist in understanding metrics or performing tasks such as summarizing data, finding correlations, handling missing values, etc. Example user inquiries could be 'show summary statistics for all columns', 'find correlation between age and salary', or 'find a mean of prices in the dataset'. Should return the desired metrics as a string.
     """,
     "parameters": {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "The user's plaintext query that will be translated into executale code. Can be re-written to be more specific for code generation, which will be handled by OpenAI."
+                "description": "The code to execute on a pandas df. Should be in Python."
             },
         },
         "required": ["query"],
@@ -83,8 +83,7 @@ tools = [
     "name": "finalize_response",
     "description": """Call this after generating all of the needed information for an appropriate repsonse. If this tool is to be called, it should be the last tool called as it ends the chain-of-thought and synthesizes what has been generated so far.
 
-    It will ultimately return a Vega-lite spec that has an appropriate 'description' field.
-
+    It will ultimately return a Vega-lite spec that has an human-like explanation in the 'description' field.
     """,
     "parameters": {
         "type": "object",
@@ -93,27 +92,15 @@ tools = [
                 "type": "dict",
                 "description": "The final Vega-lite spec for data visualization"
             },
+            "desc": {
+                "type": "string",
+                "description": "The final response to give to the user. May include information about the metrics."
+            }
         },
-        "required": ["vega_spec"],
+        "required": ["vega_spec", "desc"],
         "additionalProperties": False
     }
     },
-    {
-    "name": "reject_query",
-    "description": """Call this function if the user's query is irrelevant to the data. Should return an empty Vega-lite spec whose 'description' field contains a reasoning for why the user is wrong and a suggestion of topics/queries that are acceptable based on the data. If this function is to be called, then it will be the last function called.
-    """,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The user's query, which is needed for context."
-            },
-        },
-        "required": ["query"],
-        "additionalProperties": False
-    }
-    }
 ]
 
 def create_vega_spec():
@@ -122,10 +109,14 @@ def create_vega_spec():
 def create_analysis_code():
     return ""
 
+def synthesize_final_ans():
+    return ""
+
 
 tool_map = {
     'generate_chart': get_data_overview,
-    'analyze_data': execute_sql
+    'analyze_data': execute_sql,
+    'finalize_response': synthesize_final_ans
 }
 
 react_function_calling_prompt = '''You are a helpful assistant.
@@ -148,47 +139,87 @@ Final Answer: the final answer to the original input question
 
 '''
 
+# Helper
+#print msg in red, accept multiple strings like print statement
+def print_red(*strings):
+  print('\033[91m' + ' '.join(strings) + '\033[0m')
 
+# print msg in blue, , accept multiple strings like print statement
+def print_blue(*strings):
+  print('\033[94m' + ' '.join(strings) + '\033[0m')
 
 
 # Endpoint to interact with OpenAI API via LangChain
 @app.post("/query", response_model=QueryResponse)
 async def query_openai(request: QueryRequest):
     try:
-        # Call the OpenAI API via LangChain
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": f"Here are the headers: {', '.join(request.headers)}"
-                },
-                {
-                    "role": "user",
-                    "content": f"""Here is the full csv to better contextualize your answers: {json.dumps(request.sample)} 
-                    """
-                },
-                {
-                    "role": "user",
-                    "content": f"""
+        df = pd.DataFrame((request.sample))
+        messages=[
+            {
+                "role": "system",
+                "content": react_function_calling_prompt
+            },
+            {
+                "role": "user",
+                "content": f"Here are the headers: {', '.join(request.headers)}"
+            },
+            {
+                "role": "user",
+                "content": f"""Here is a section of the csv to better contextualize your answers: {df.head(20)} 
+                """
+            },
+            {
+                "role": "user",
+                "content": f"""
 
-                    The Vega-Lite specification should at least have:
-                    - A "description" field that summarizes what the specification is.
-                    - The x-axis should be labeled.
-                    - The y-axis should be labeled.
-                    - Be in JSON format.
-                    - No URL field.
+                Your final Vega-Lite specification should at least have:
+                - A "description" field that summarizes what the specification is.
+                - The x-axis should be labeled.
+                - The y-axis should be labeled.
+                - Be in JSON format.
+                - No URL field.
 
-                    Give me a Vega-Lite (JSON) specification that fulfills the following request: {request.prompt}"""
-                },
-            ],
-            model="gpt-4o",
-            temperature=0,
-            response_format={ "type": "json_object" }
-        )
+                Give me a Vega-Lite (JSON) specification that fulfills the following request: {request.prompt}"""
+            },
+        ]
+
+        i = 0
+        while i < 8: # Max of 8 iterations, change if needed
+            response = client.chat.completions.create( # Chat
+                messages=messages,
+                model="gpt-4o",
+                tools=tools
+            )
+
+            if response.choices[0].message.content:
+                print_red(response.choices[0].message.content) 
+            
+            messages.append(response.choices[0].message)
+            for tool_call in response.choices[0].message.tool_calls:
+                print_blue('calling:'+tool_call.function.name)
+                # call the function
+
+                arguments = json.loads(tool_call.function.arguments)
+                function_to_call = tool_map[tool_call.function.name]
+                result = function_to_call(**arguments) # save outcome
+
+                # create a message containing the tool call result
+                result_content = json.dumps({
+                    **arguments,
+                    "result": result
+                })
+                function_call_result_message = {
+                    "role": "tool",
+                    "content": result_content,
+                    "tool_call_id": tool_call.id
+                }
+                print_blue('action result:' + result_content)
+
+                # save the action outcome for LLM
+                messages.append(function_call_result_message)
+
+                
+
 
         try:
             response_json = json.loads(chat_completion.choices[0].message.content.strip())
