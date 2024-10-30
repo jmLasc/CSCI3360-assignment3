@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef  } from "react";
+import ReactMarkdown from 'react-markdown';
 import * as d3 from 'd3-dsv';
 import { VegaLite } from 'react-vega'
 import remarkGfm from 'remark-gfm'
-<Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
 const url = process.env.NODE_ENV === 'production' ? 'https://csci3360-assignment2.onrender.com/' : 'http://127.0.0.1:8000/';
 
 function App() {
   // Message Handling
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([ ]);
+  const [loading, setLoading] = useState(false);
 
   function sendMessage() { 
     if (message === "") {
@@ -27,9 +28,12 @@ function App() {
       ]);
       return; 
     }
+
+    // Processing...
+    setLoading(true);
   
     // Has CSV -> FastAPI
-    const sampleData = formattedData;
+    const sampleData = formattedData.slice(0, 50);
     console.log("Sample data:", sampleData);
     
     fetch(`${url}query`, {
@@ -79,7 +83,10 @@ function App() {
       ]);
       console.log("FastAPI end", url);
       console.log("NODE_ENV", process.env.NODE_ENV);
-    });
+    }).finally(() => {
+      // End loading
+      setLoading(false);
+    });;
   }
   
 
@@ -210,7 +217,7 @@ function App() {
     <div className="flex items-center justify-center pt-10 pb-20">
       <div className="px-0 py-0 max-w-5xl w-full">
         {/* Header */}
-        <h1 className="text-5xl font-bold mb-4 text-left">Data Visualization Assistant</h1>
+        <h1 className="text-5xl font-bold mb-4 text-left">Data Visualization Assistant v2</h1>
 
         {/* CSV Upload Zone */}
         <div 
@@ -290,14 +297,19 @@ function App() {
         <div className="mt-5 flex gap-2">
           <input
             type="text"
-            placeholder="Type your message here"
+            placeholder={loading ? "Loading... this may take a few seconds..." : "Type your message here"} 
             value={message}
             className="input input-bordered w-full"
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleMessage}
+            disabled={loading} 
           />
-          <button className="btn" onClick={sendMessage}>
-            Send
+          <button className="btn" onClick={sendMessage} disabled={loading}>
+          {loading ? (
+            <img src="https://github.com/n3r4zzurr0/svg-spinners/raw/main/svg-css/3-dots-bounce.svg" alt="Loading..." className="w-5 h-5 animate-spin" />
+          ) : (
+            "Send"
+          )}
           </button>
         </div>
       </div>
