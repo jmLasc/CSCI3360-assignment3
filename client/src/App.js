@@ -33,7 +33,7 @@ function App() {
     setLoading(true);
   
     // Has CSV -> FastAPI
-    const sampleData = formattedData.slice(0, 50);
+    const sampleData = formattedData; // DEBUG: Add .slice(0, 10) for faster times
     console.log("Sample data:", sampleData);
     
     fetch(`${url}query`, {
@@ -309,6 +309,13 @@ function App() {
             <img src="https://github.com/n3r4zzurr0/svg-spinners/raw/main/svg-css/3-dots-bounce.svg" alt="Loading..." className="w-5 h-5 animate-spin" />
           ) : (
             "Send"
+          )}
+          </button>
+          <button className="btn" onClick={() => setMessages([])} disabled={loading}>
+          {loading ? (
+            <img src="https://github.com/n3r4zzurr0/svg-spinners/raw/main/svg-css/3-dots-bounce.svg" alt="Loading..." className="w-5 h-5 animate-spin" />
+          ) : (
+            "Clear Messages"
           )}
           </button>
         </div>
