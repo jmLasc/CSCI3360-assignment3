@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef  } from "react";
 import * as d3 from 'd3-dsv';
 import { VegaLite } from 'react-vega'
+import remarkGfm from 'remark-gfm'
+<Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
 const url = process.env.NODE_ENV === 'production' ? 'https://csci3360-assignment2.onrender.com/' : 'http://127.0.0.1:8000/';
 
 function App() {
@@ -27,7 +29,7 @@ function App() {
     }
   
     // Has CSV -> FastAPI
-    const sampleData = formattedData.slice(0, 10);
+    const sampleData = formattedData;
     console.log("Sample data:", sampleData);
     
     fetch(`${url}query`, {

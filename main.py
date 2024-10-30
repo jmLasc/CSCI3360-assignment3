@@ -7,6 +7,9 @@ from openai import OpenAI
 import os
 import json
 from dotenv import load_dotenv
+import sys
+from io import StringIO
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,6 +45,9 @@ class QueryResponse(BaseModel):
     response: dict   
 
 
+
+
+
 system_prompt = """
 You are a data visualization assistant who will help the user with generating Vega-lite specifications.
 Respond to the user's question faithfully and to the best of your ability. 
@@ -53,16 +59,18 @@ You may raise an error. These are a few situations where it is appropriate for y
 - If the question is unanswerable or irrelevant to the data, inform the user.
 - If the visualization is impossible to perform, inform the user
 - If the Vega-Lite (json) specification is ill-formed and cannot be fixed, notify the user.
-- If the message is unrelated to the data being given
+- If the message is unrelated to the data 
 
-You will also provide a Vega-lite spec (json), which is to aid in visualization of the data.
+You will also provide a Vega-lite spec (json), which is to aid in visualization of the data. 
 
 The user may ask for a scatterplot, bar chart, line chart, or any other visualization supported by Vega-lite. If the user does not specify, pick a visualization best compatible with the request and Vega-lite's limitations.
 When making a graph in this way, try not to use the names of the entries unless specifically asked to. For example, the user may provide a csv of book names and ask you to list out the sales of a certain series. In that case, do not list out every book in the csv, but rather target that series specifically to the best of your ability.
 
-You are to make very accurate predictions and realistic visualizations that are helpful and visually useful for the user.
+You are to make very accurate predictions and realistic visualizations that are helpful and visually useful for the user. Ensure that no chart makes an individual bar for each unique category. Find concise ways to format the data in the Vega-lite specification.
 Your output is strictly JSON only. You will be rewarded for doing an accurate job.
 """
+
+
 
 
 # Endpoint to interact with OpenAI API via LangChain
@@ -82,9 +90,7 @@ async def query_openai(request: QueryRequest):
                 },
                 {
                     "role": "user",
-                    "content": f"""Here are a few sample entries to better contextualize your answers: {json.dumps(request.sample)} 
-                    
-                    Please keep in mind that this is a sample and there is more information in this csv than what has been provided. 
+                    "content": f"""Here is the full csv to better contextualize your answers: {json.dumps(request.sample)} 
                     """
                 },
                 {
