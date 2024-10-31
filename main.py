@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import sys
 from io import StringIO
 import pandas as pd
+import re
 
 
 # Load environment variables from .env file
@@ -45,112 +46,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     response: dict   
 
-### ReAct setup
-# Tools + mapping
-tools = [
-    {
-    "name": "generate_chart",
-    "description": """Call this to generate a Vega-lite specification based on the user's inquiry for visualization. Requests can be short and should relate to the data. Example user inquiries could be 'show mpg over time' or 'cars by origins' if the csv is about cars. Should return a JSON object.
-    """,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The user's query. Can be re-written to be more comprehensible for Vega-lite generation, which will be handled by OpenAI.",
-            },
-        },
-        "required": ["query"],  
-        "additionalProperties": False,
-    }
-    },{
-    "name": "analyze_data",
-    "description": """Call this to generate Python code that uses pandas for data analysis. The code should assist in understanding metrics or performing tasks such as summarizing data, finding correlations, handling missing values, etc. Example user inquiries could be 'show summary statistics for all columns', 'find correlation between age and salary', or 'find a mean of prices in the dataset'. Should return the desired metrics as a string.
-    """,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The code to execute on a pandas df named 'df'. Should be written in Python and executable. Must end in a print() statement."
-            },
-        },
-        "required": ["query"],
-        "additionalProperties": False
-    }
-    },
-    {
-    "name": "finalize_response",
-    "description": """Call this after generating all of the needed information for an appropriate repsonse. If this tool is to be called, it should be the last tool called as it ends the chain-of-thought and synthesizes what has been generated so far.
-
-    It will ultimately return a Vega-lite spec that has an human-like explanation in the 'description' field.
-    """,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "vega_spec": {
-                "type": "dict",
-                "description": "The final Vega-lite spec for data visualization. Must have a 'description' field."
-            },
-            "desc": {
-                "type": "string",
-                "description": "The final response to give to the user. May include information about the metrics."
-            }
-        },
-        "required": ["vega_spec", "desc"],
-        "additionalProperties": False
-    }
-    },
-]
-
-
-def create_vega_spec(query):
-    response = client.chat.completions.create( # Chat
-        messages=[
-            
-        ],
-        model="gpt-4o",
-        tools=tools
-    )
-    return f""
-
-def create_analysis_code(query):
-    return f""
-
-def synthesize_final_ans(vega_spec, desc):
-    vega_spec['description'] = desc
-    
-    return f""
-
-
-tool_map = {
-    'generate_chart': create_vega_spec,
-    'analyze_data': create_analysis_code,
-    'finalize_response': synthesize_final_ans
-}
-
-react_function_calling_prompt = '''You are a helpful assistant.
-
-
-You run in a loop of Thought, Action, Observation in the following manner to answer the user question.
-
-Question: the input question you must answer
-
-Thought: you should always think about what to do
-Action: the action to take, should be one of tools provided
-Action Input: the input to the action
-
-You will be then call again with the result of the action.
-
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-'''
-
-# Helper functions
-#print msg in red, accept multiple strings like print statement
+### Helper funcs
 def print_red(*strings):
   print('\033[91m' + ' '.join(strings) + '\033[0m')
 
@@ -194,11 +90,203 @@ def execute_panda_dataframe_code(code):
         sys.stdout = old_stdout
         return repr(e)
 
+def clean_spec(raw_text):
+  cleaned_text = re.sub(r'^```json\n|\n```$|\\n|\\|^```|\n\s*|\r', '', raw_text)
+  formatted_json = cleaned_text.strip()
+  return formatted_json
+
+
+### ReAct setup
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "strict": True,
+            "name": "generate_chart",
+            "description": """
+            ALways try to call this function.
+            Call this to generate a Vega-lite specification based on the user's inquiry for visualization. Requests can be short / terse and should relate to the data. Example user inquiries could be 'mpg over time' or 'cars by origins' if the csv is about cars.
+            """,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The user's query. Can be re-written to be more comprehensible for Vega-lite generation, which will be handled by OpenAI.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Relevant context that will be used in generating the Vega-Lite chart. Should include information such as headers, data sample, among any other facts that would be useful for chart generation.",
+                    }
+                },
+                "required": ["query", "context"],
+                "additionalProperties": False,
+            }
+        }
+    },
+    {
+        "type": "function", 
+        "function": {
+            "strict": True,
+            "name": "analyze_data",
+            "description": """Call this to generate Python code that uses pandas for data analysis. The code should assist in understanding metrics or performing tasks such as summarizing data, finding correlations, handling missing values, etc. Example user inquiries could be 'show summary statistics for all columns', 'find correlation between age and salary', or 'find a mean of prices in the dataset'. Should return the desired metrics as a string.
+            
+            May be ran multiple times in case you cannot generate all of the necessary metrics in one go or in the event that the code you ran failed.
+            Very important is that you must begin with "global df", so you can have access to the varaible df, which is a pandas df of the user's provided data.
+            You may also run this code in the event that you need to peek at some metrics in order to more fully reply to the user.
+            """,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The code to execute on a pandas df named 'df'. Must be written in Python and executable. Must end in a formatted print statement, e.g. print(f'[relevant info...]'), as its output will be captured by StringIO."
+                    },
+                },
+                "required": ["code"],
+                "additionalProperties": False,
+            }}
+    },
+    {
+        "type": "function",
+        "function": {
+            "strict": True,
+            "name": "finalize_response",
+            "description": """
+            Call this after generating all of the needed information for an appropriate response. 
+            If this tool is to be called, it should be the last tool called.
+
+            You can draw from information provided in the chat history and from the tool results.
+
+            """,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "vega_spec": {
+                        "type": "string",
+                        "description": """The final Vega-lite spec (must be a JSON). Can be blank, but only when raising an error. 
+                        Must have a descriptive 'description' field that talks about the data. If code was ran, it must summarize the metrics obtained."""
+                    },
+                },
+                "required": ["vega_spec"],
+                "additionalProperties": False,
+        }}
+    },
+]
+
+
+
+# Funcs
+def create_vega_spec(query, context):
+    messages = [
+        {
+            "role": "system",
+            "content": vega_spec_prompt
+        },
+        {
+            "role": "user",
+            "content": f"Here is the context to aid you in Vega-lite spec generation: {context}"
+        },
+        {
+            "role": "user",
+            "content": f"This is my inquiry for which you are to generate a Vega-lite spec in JSON: {query}"
+        },
+    ]
+
+
+    response = client.chat.completions.create( # Chat
+            messages=messages,
+            model="gpt-4o",
+            response_format= { "type": "json_object" }
+        )
+
+    return response.choices[0].message.content
+
+def create_analysis_code(code):
+    sanitized = sanitize_input(code)
+    result = execute_panda_dataframe_code(sanitized)
+
+
+    return f"""
+    ** BEGIN PYTHON CODE RESULT **
+    {result}
+    ** END PYTHON CODE REUSLT ** 
+    
+    """
+
+def synthesize_final_ans(vega_spec):
+    messages = [
+        {
+            "role": 'system',
+            "content": synthesis_prompt
+        },
+        {
+            "role": 'user',
+            "content": str(vega_spec)
+        }
+    ]
+
+    response = client.chat.completions.create( # Chat
+            messages=messages,
+            model="gpt-4o",
+            response_format= { "type": "json_object" }
+        )
+
+    return response.choices[0].message.content
+
+df = pd.DataFrame() # Store outside of funcs for global scope. Make sure to use "global" in relevant funcs.
+
+tool_map = {
+    'generate_chart': create_vega_spec,
+    'analyze_data': create_analysis_code,
+    'finalize_response': synthesize_final_ans
+}
+
+
+### Prompts
+react_function_calling_prompt = '''You are a data analysis assistant using the ReAct style of reasoning for LLMs.
+
+You run in a loop of Thought, Action, Observation in the following manner to answer the user question.
+You MUST articulate your process in this structured manner:
+
+Question: the input query you must answer in full
+Thought: you should always think about what to do
+Action: the action to take, should be one of tools provided
+Action Input: the input to the action
+
+
+You will be then call again with the result of the action.
+
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+'''
+
+vega_spec_prompt = ''' 
+You are a data visualization assistant who will help the user with generating Vega-lite specifications.
+Respond to the user's question faithfully and to the best of your ability. 
+
+Your main task is to generate a Vega-lite spec (json), which is to aid in visualization of the data.
+
+The user may ask for a scatterplot, bar chart, line chart, or any other visualization supported by Vega-lite. If the user does not specify, pick a visualization best compatible with the request and Vega-lite's limitations.
+When making a graph in this way, try not to use the names of the entries unless specifically asked to. For example, the user may provide a csv of book names and ask you to list out the sales of a certain series. In that case, do not list out every book in the csv, but rather target that series specifically to the best of your ability.
+
+You are to make very accurate predictions and realistic visualizations that are helpful and visually useful for the user.
+Your output is strictly in JSON format only. You will be rewarded for doing an accurate job.
+'''
+
+synthesis_prompt = '''
+Given the following chunk of text, you must now make a singular Vega-lite spec. It must be in JSON format. Your task is to trim the text outside of the JSON and alter the 'description' field of the final Vega-lite spec such that it summarizes the important info that was potentially trimmed off
+'''
+
+
 # Endpoint to interact with OpenAI API via LangChain
 @app.post("/query", response_model=QueryResponse)
 async def query_openai(request: QueryRequest):
     try:
-        df = pd.DataFrame((request.sample))
+        global df
+        df = pd.DataFrame((request.sample)) # Catch df
         messages=[
             {
                 "role": "system",
@@ -229,7 +317,7 @@ async def query_openai(request: QueryRequest):
         ]
 
         i = 0
-        while i < 8: # Max of 8 iterations, change if needed
+        while i < 10: # Max of 10 iters, change if needed
             response = client.chat.completions.create( # Chat
                 messages=messages,
                 model="gpt-4o",
@@ -240,12 +328,17 @@ async def query_openai(request: QueryRequest):
                 print_red(response.choices[0].message.content) 
             
             messages.append(response.choices[0].message)
+
+            if not response.choices[0].message.tool_calls:
+                break
+
             for tool_call in response.choices[0].message.tool_calls:
-                print_blue('calling:'+tool_call.function.name)            
+                print_blue('calling:'+tool_call.function.name)           
                 
                 # call the function
                 arguments = json.loads(tool_call.function.arguments)
                 function_to_call = tool_map[tool_call.function.name]
+
                 result = function_to_call(**arguments) # save outcome
 
                 # create a message containing the tool call result
@@ -262,21 +355,20 @@ async def query_openai(request: QueryRequest):
 
                 # save the action outcome for LLM
                 messages.append(function_call_result_message)
-                
-                # Finishing response, loop ends 
-                if tool_call.function.name == 'finalize_response':
-                    i += 8
+            
+                # break
+                if tool_call == "finalize_response":
+                    i += 10
                     break
 
-                
-
+            i += 1
 
         try:
-            response_json = json.loads(chat_completion.choices[0].message.content.strip())
+            response_json = json.loads(messages[-2]['content'])
             return QueryResponse(response=response_json)
-        except json.JSONDecodeError: # Response had faulty JSON code
-            raise HTTPException(status_code=500, detail="Failed to decode JSON from OpenAI response.")
-    except Exception as e: # Chat completion exception (failed to connect to OpenAI / timed out)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="Failed to decode JSON from OpenAI response. Apologies, but please try again.")
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Root endpoint
