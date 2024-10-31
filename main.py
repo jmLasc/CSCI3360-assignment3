@@ -292,6 +292,7 @@ Chart queries include asking queries such as showing a bar chart, visualizing as
 
 A user's query always includes a data query, but may not always include a chart query.
 
+Always try to call upon your tools.
 
 '''
 
@@ -336,7 +337,7 @@ async def query_openai(request: QueryRequest):
             },
             {
                 "role": "user",
-                "content": f"Here are the headers: {', '.join(request.headers)} Note that these headers are incredibly case sensitive. Be sure to communicate that fact to any subsequent tool calls that rely on chart generation."
+                "content": f"Here are the headers: {', '.join(request.headers)} Note that these headers are case and character sensitive. Be sure to communicate that fact to any subsequent tool calls that rely on chart generation."
             },
             {
                 "role": "user",
@@ -348,58 +349,64 @@ async def query_openai(request: QueryRequest):
                 "content": f"""
 
                 This is the user query: {request.prompt}
-                Remember to label it as either a data and/or a chart query."""
+                
+                Remember to label it as either a data and/or a chart query. Fully respond to the query if possible."""
             },
         ]
 
         i = 0
         while i < 10: # Max of 10 iters, change if needed
-            print(f"current iter:{i}")
-            response = client.chat.completions.create( # Chat
-                messages=messages,
-                model="gpt-4o",
-                tools=tools,
-                temperature=0
-            )
+            try:
+                print(f"current iter:{i}")
+                response = client.chat.completions.create( # Chat
+                    messages=messages,
+                    model="gpt-4o",
+                    tools=tools,
+                )
 
-            if response.choices[0].message.content:
-                print_red(response.choices[0].message.content) 
-            
-            messages.append(response.choices[0].message)
-
-            if not response.choices[0].message.tool_calls:
-                break
-
-            for tool_call in response.choices[0].message.tool_calls:
-                print_blue('calling:'+tool_call.function.name)           
+                if response.choices[0].message.content:
+                    print_red(response.choices[0].message.content) 
                 
-                # call the function
-                arguments = json.loads(tool_call.function.arguments)
-                function_to_call = tool_map[tool_call.function.name]
+                messages.append(response.choices[0].message)
 
-                result = function_to_call(**arguments) # save outcome
+                # if not response.choices[0].message.tool_calls:
+                #     break
 
-                # create a message containing the tool call result
-                result_content = json.dumps({
-                    **arguments,
-                    "result": result
+                for tool_call in response.choices[0].message.tool_calls:
+                    print_blue('calling:'+tool_call.function.name)           
+                    
+                    # call the function
+                    arguments = json.loads(tool_call.function.arguments)
+                    function_to_call = tool_map[tool_call.function.name]
+
+                    result = function_to_call(**arguments) # save outcome
+
+                    # create a message containing the tool call result
+                    result_content = json.dumps({
+                        **arguments,
+                        "result": result
+                    })
+                    function_call_result_message = {
+                        "role": "tool",
+                        "content": result_content,
+                        "tool_call_id": tool_call.id
+                    }
+                    print_blue('action result:' + result_content)
+
+                    # save the action outcome for LLM
+                    messages.append(function_call_result_message)
+                
+                    # break
+                    if tool_call.function.name == "finalize_response":
+                        print("Hey, I'm done!")
+                        to_json = result
+                        i += 10
+                        break
+            except:
+                messages.append({
+                    "role": "system",
+                    "content": "It looks like that failed. Try again."
                 })
-                function_call_result_message = {
-                    "role": "tool",
-                    "content": result_content,
-                    "tool_call_id": tool_call.id
-                }
-                print_blue('action result:' + result_content)
-
-                # save the action outcome for LLM
-                messages.append(function_call_result_message)
-            
-                # break
-                if tool_call.function.name == "finalize_response":
-                    print("Hey, I'm done!")
-                    to_json = result
-                    i += 10
-                    break
 
             i += 1
 

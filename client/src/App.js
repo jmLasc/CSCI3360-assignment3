@@ -68,14 +68,19 @@ function App() {
       }
       
       // Set Vega-Lite spec and data for the chart
-      const spec = data.response;
+      const spec = data.response.$schema ? data.response : null;
+      console.log("var spec status: ", spec)
   
       // Create a message for the chart
-      setMessages((prevMessages) => [
+      if (spec) {
+        setMessages((prevMessages) => [
         ...prevMessages,
-        { sender: "System", chart: true, spec: spec, data: formattedData }, // Include chart data
-      ]);
-    })
+        { sender: "System", chart: (spec ? true: false), spec: spec, data: formattedData }, // Include chart data
+      ])
+      };
+    }
+  
+  )
     .catch(error => {
       setMessages((prevMessages) => [
         ...prevMessages,
@@ -276,17 +281,17 @@ function App() {
 
               <div className="chat-header">{msg.sender}</div>
               <div className="chat-bubble">
-                {msg.chart ? ( // Check if the message is a chart
-                  <VegaLite
-                    spec={{
-                      ...msg.spec,
-                      data: { values: msg.data } // Use the loaded CSV data
-                    }}
-                    onNewView={() => scrollToBottom()}
-                  />
-                ) : (
-                  msg.text // Otherwise, render the text
-                )}
+              {msg.chart ? ( // Only render if there's a spec
+              <VegaLite
+                spec={{
+                  ...msg.spec,
+                  data: { values: msg.data } // Use the loaded CSV data
+                }}
+                onNewView={() => scrollToBottom()}
+              />
+            ) : (
+              msg.text // Otherwise, render the text
+            )}
               </div>
             </div>
           ))}
