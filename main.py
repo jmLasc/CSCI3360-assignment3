@@ -318,6 +318,7 @@ async def query_openai(request: QueryRequest):
 
         i = 0
         while i < 10: # Max of 10 iters, change if needed
+            print(f"current iter:{i}")
             response = client.chat.completions.create( # Chat
                 messages=messages,
                 model="gpt-4o",
