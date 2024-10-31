@@ -165,7 +165,7 @@ tools = [
 
             You can draw from information provided in the chat history and from the tool results.
             
-            In rare cases, if the user's inquiry is irrelevant or not related to data analysis, you may provide a blank Vega-lite spec with a description field that explains why the user's query is not being processed.
+            If the user's inquiry is irrelevant or not related to data analysis, you may call this first so that a result that explains why the user's query is not being processed can be generated.
             """,
             "parameters": {
                 "type": "object",
@@ -174,11 +174,13 @@ tools = [
                         "type": "string",
                         "description": """The final Vega-lite spec (must be a JSON). Can be blank, but only when raising an error. 
                         Must have a descriptive 'description' field that talks about the data. If code was ran, it may draw from the metrics obtained.
-                        If the user is being rejected, please inform the function of that as well."""
+                        """
                     },
                     "context": {
                         "type": "string",
-                        "description": """Any context from the conversation that is relevant to the final Vega-lite spec. It is important that you always provide context, such as any code outputs and the user's original query."""
+                        "description": """Any context from the conversation that is relevant to the final Vega-lite spec. It is important that you always provide context, such as any code outputs, the headers, and the user's original query.
+                        
+                        If the user is being rejected, please inform the function of that."""
                     }
                 },
                 "required": ["vega_spec", "context"],
@@ -334,7 +336,7 @@ async def query_openai(request: QueryRequest):
             },
             {
                 "role": "user",
-                "content": f"Here are the headers: {', '.join(request.headers)}"
+                "content": f"Here are the headers: {', '.join(request.headers)} Note that these headers are incredibly case sensitive. Be sure to communicate that fact to any subsequent tool calls that rely on chart generation."
             },
             {
                 "role": "user",
@@ -345,14 +347,8 @@ async def query_openai(request: QueryRequest):
                 "role": "user",
                 "content": f"""
 
-                Your final Vega-Lite specification should at least have:
-                - A "description" field that summarizes what the specification is.
-                - The x-axis should be labeled.
-                - The y-axis should be labeled.
-                - Be in JSON format.
-                - No URL field.
-
-                Give me a Vega-Lite (JSON) specification that fulfills the following request: {request.prompt}"""
+                This is the user query: {request.prompt}
+                Remember to label it as either a data and/or a chart query."""
             },
         ]
 
@@ -409,6 +405,7 @@ async def query_openai(request: QueryRequest):
 
         try:
             response_json = json.loads(to_json)
+            print(response_json)
             return QueryResponse(response=response_json)
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail="Failed to decode JSON from OpenAI response. Apologies, but please try again.")

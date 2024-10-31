@@ -1,0 +1,8 @@
+# Extra Prompts
+
+Your final Vega-Lite specification should at least have:
+                - A "description" field that summarizes what the specification is.
+                - The x-axis should be labeled.
+                - The y-axis should be labeled.
+                - Be in JSON format.
+                - No URL field.
