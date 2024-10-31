@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import * as d3 from 'd3-dsv';
 import { VegaLite } from 'react-vega'
 import remarkGfm from 'remark-gfm'
-const url = process.env.NODE_ENV === 'production' ? 'https://csci3360-assignment2.onrender.com/' : 'http://127.0.0.1:8000/';
+const url = process.env.NODE_ENV === 'production' ? 'https://csci3360-assignment3.onrender.com/' : 'http://127.0.0.1:8000/';
 
 function App() {
   // Message Handling
