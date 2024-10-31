@@ -365,6 +365,7 @@ async def query_openai(request: QueryRequest):
 
         try:
             response_json = json.loads(messages[-2]['content'])
+            print(response_json)
             return QueryResponse(response=response_json)
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail="Failed to decode JSON from OpenAI response. Apologies, but please try again.")
