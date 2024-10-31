@@ -104,8 +104,7 @@ tools = [
             "strict": True,
             "name": "generate_chart",
             "description": """
-            ALways try to call this function.
-            Call this to generate a Vega-lite specification based on the user's inquiry for visualization. Requests can be short / terse and should relate to the data. Example user inquiries could be 'mpg over time' or 'cars by origins' if the csv is about cars.
+            Call this to generate a Vega-lite specification for chart queries. Requests can be short / terse and should relate to the data. Example user inquiries could be 'mpg over time' or 'cars by origins' if the csv is about cars.
             """,
             "parameters": {
                 "type": "object",
@@ -129,18 +128,26 @@ tools = [
         "function": {
             "strict": True,
             "name": "analyze_data",
-            "description": """Call this to generate Python code that uses pandas for data analysis. The code should assist in understanding metrics or performing tasks such as summarizing data, finding correlations, handling missing values, etc. Example user inquiries could be 'show summary statistics for all columns', 'find correlation between age and salary', or 'find a mean of prices in the dataset'. Should return the desired metrics as a string.
+            "description": """
+            Call this to generate Python code that uses pandas for data queries. The result of the code should assist in your final response. 
+            Example user inquiries could be:
+            - 'range of X variable'
+            - 'summary statistics'
+            - 'correlation between X and Y'
+            - 'mean of X variable'
             
-            May be ran multiple times in case you cannot generate all of the necessary metrics in one go or in the event that the code you ran failed.
-            Very important is that you must begin with "global df", so you can have access to the varaible df, which is a pandas df of the user's provided data.
-            You may also run this code in the event that you need to peek at some metrics in order to more fully reply to the user.
+            Should be ran multiple times in case you cannot generate all of the necessary metrics in one go or in the event that the code you ran failed / had an invalid entry.
+            
+            Must begin with 'global df' and end in a 'print(...)' statement.
+            
+            Call this function so that you need obtain metrics in order to more fully reply to the user.
             """,
             "parameters": {
                 "type": "object",
                 "properties": {
                     "code": {
                         "type": "string",
-                        "description": "The code to execute on a pandas df named 'df'. Must be written in Python and executable. Must end in a formatted print statement, e.g. print(f'[relevant info...]'), as its output will be captured by StringIO."
+                        "description": "The code to execute on a pandas df named 'df'. Must be written in Python and executable. Must have 1) 'global df' to access the data & 2) end in a formatted print statement, e.g. print(f'[relevant info...]'), as its output will be captured by StringIO."
                     },
                 },
                 "required": ["code"],
@@ -157,7 +164,8 @@ tools = [
             If this tool is to be called, it should be the last tool called.
 
             You can draw from information provided in the chat history and from the tool results.
-
+            
+            In rare cases, if the user's inquiry is irrelevant or not related to data analysis, you may provide a blank Vega-lite spec with a description field that explains why the user's query is not being processed.
             """,
             "parameters": {
                 "type": "object",
@@ -165,14 +173,20 @@ tools = [
                     "vega_spec": {
                         "type": "string",
                         "description": """The final Vega-lite spec (must be a JSON). Can be blank, but only when raising an error. 
-                        Must have a descriptive 'description' field that talks about the data. If code was ran, it must summarize the metrics obtained."""
+                        Must have a descriptive 'description' field that talks about the data. If code was ran, it may draw from the metrics obtained.
+                        If the user is being rejected, please inform the function of that as well."""
                     },
+                    "context": {
+                        "type": "string",
+                        "description": """Any context from the conversation that is relevant to the final Vega-lite spec. It is important that you always provide context, such as any code outputs and the user's original query."""
+                    }
                 },
-                "required": ["vega_spec"],
+                "required": ["vega_spec", "context"],
                 "additionalProperties": False,
         }}
     },
 ]
+
 
 
 
@@ -197,6 +211,7 @@ def create_vega_spec(query, context):
     response = client.chat.completions.create( # Chat
             messages=messages,
             model="gpt-4o",
+            temperature=0,
             response_format= { "type": "json_object" }
         )
 
@@ -214,7 +229,7 @@ def create_analysis_code(code):
     
     """
 
-def synthesize_final_ans(vega_spec):
+def synthesize_final_ans(vega_spec, context):
     messages = [
         {
             "role": 'system',
@@ -222,13 +237,20 @@ def synthesize_final_ans(vega_spec):
         },
         {
             "role": 'user',
-            "content": str(vega_spec)
+            "content":f"""
+            
+            This is the context so far:{str(context)}
+
+            This is the final message generated so far: {str(vega_spec)}
+            
+            """
         }
     ]
 
     response = client.chat.completions.create( # Chat
             messages=messages,
             model="gpt-4o",
+            temperature=0,
             response_format= { "type": "json_object" }
         )
 
@@ -244,8 +266,11 @@ tool_map = {
 
 
 ### Prompts
+### Prompts
 react_function_calling_prompt = '''You are a data analysis assistant using the ReAct style of reasoning for LLMs.
 
+
+Your reasoning style is as follows:
 You run in a loop of Thought, Action, Observation in the following manner to answer the user question.
 You MUST articulate your process in this structured manner:
 
@@ -254,13 +279,18 @@ Thought: you should always think about what to do
 Action: the action to take, should be one of tools provided
 Action Input: the input to the action
 
-
 You will be then call again with the result of the action.
 
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
+
+Your function is as follows:
+You are to help the user in data and/or chart queries. The user will provide some context, which will assist you in performing a task.
+
+Data queries incldue asking queries such as the range, mean, min/max, averages, etc, number of entries above a certain threshold, etc.
+Chart queries include asking queries such as showing a bar chart, visualizing as a histogram, graphing one variable to another, etc.
+
+A user's query always includes a data query, but may not always include a chart query.
+
+
 '''
 
 vega_spec_prompt = ''' 
@@ -269,7 +299,8 @@ Respond to the user's question faithfully and to the best of your ability.
 
 Your main task is to generate a Vega-lite spec (json), which is to aid in visualization of the data.
 
-The user may ask for a scatterplot, bar chart, line chart, or any other visualization supported by Vega-lite. If the user does not specify, pick a visualization best compatible with the request and Vega-lite's limitations.
+The user may ask for a scatterplot, bar chart, line chart, or any other visualization supported by Vega-lite. If the user does not specify, pick a visualization best compatible with the context, query, and Vega-lite's limitations.
+
 When making a graph in this way, try not to use the names of the entries unless specifically asked to. For example, the user may provide a csv of book names and ask you to list out the sales of a certain series. In that case, do not list out every book in the csv, but rather target that series specifically to the best of your ability.
 
 You are to make very accurate predictions and realistic visualizations that are helpful and visually useful for the user.
@@ -277,7 +308,15 @@ Your output is strictly in JSON format only. You will be rewarded for doing an a
 '''
 
 synthesis_prompt = '''
-Given the following chunk of text, you must now make a singular Vega-lite spec. It must be in JSON format. Your task is to trim the text outside of the JSON and alter the 'description' field of the final Vega-lite spec such that it summarizes the important info that was potentially trimmed off
+Given the following chunk of text, you must now make a final Vega-lite spec. It must be in JSON format. 
+
+Your task is to merge the text outside of the JSON and alter the 'description' field of the final Vega-lite spec such that it include all of the relevant context. This description about communicating ideas about the data / answering the user query.
+
+You may provide a JSON object that only has a "description" field if the user's query was a data query (such as what is mean/median/mode/range/etc.) and does not necessarily need a visualization. Be concise: for example, if the user's query was "what is the range for variable X?", then simply state that X has a range between number 1 and number 2.
+
+If the user is being rejected, make it such that the description is informing the user that they are being rejected because their query was not related.
+
+Please ensure that all descriptions are in a concise manner that captures all of the relevant info. Please ensure that the final Vega-lite spec has valid information and that it will properly render.
 '''
 
 
@@ -287,6 +326,7 @@ async def query_openai(request: QueryRequest):
     try:
         global df
         df = pd.DataFrame((request.sample)) # Catch df
+        to_json = None
         messages=[
             {
                 "role": "system",
@@ -322,7 +362,8 @@ async def query_openai(request: QueryRequest):
             response = client.chat.completions.create( # Chat
                 messages=messages,
                 model="gpt-4o",
-                tools=tools
+                tools=tools,
+                temperature=0
             )
 
             if response.choices[0].message.content:
@@ -358,20 +399,23 @@ async def query_openai(request: QueryRequest):
                 messages.append(function_call_result_message)
             
                 # break
-                if tool_call == "finalize_response":
+                if tool_call.function.name == "finalize_response":
+                    print("Hey, I'm done!")
+                    to_json = result
                     i += 10
                     break
 
             i += 1
 
         try:
-            response_json = json.loads(messages[-2]['content'])
-            print(response_json)
+            response_json = json.loads(to_json)
             return QueryResponse(response=response_json)
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail="Failed to decode JSON from OpenAI response. Apologies, but please try again.")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # Root endpoint
 @app.get("/")
